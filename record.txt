@@ -1,0 +1,57 @@
+QEMU := qemu-system-aarch64
+KERNEL := /home/m/buildroot/output/images/Image
+ROOTFS := /home/m/buildroot/output/images/rootfs.ext4
+QEMU_FLAGS := -M virt,gic-version=3,virtualization=on \
+              -cpu cortex-a57 \
+			  -nographic \
+			  -smp 2 \
+			  -m 2048 \
+			  -kernel $(KERNEL) \
+			  -append "root=/dev/vda rw console=ttyAMA0" \
+			  -drive if=none,file=$(ROOTFS),format=raw,id=hd0 \
+			  -device virtio-blk-device,drive=hd0 
+
+test_qemu:
+	$(QEMU) $(QEMU_FLAGS)
+
+测试环境（Qemu、Qemu 上运行的 Linux HostOS、 HostOS 使用的 rootfs）
+为了能在测试环境 Linux 上运行 mini-qemu。首先需要利用交叉编译，编译出 aarch64 架构的 mini-qemu 可执行文件。
+其次需要保证测试环境 Linux 上有 mini-qemu 依赖的动态链接库。构建 mini-qemu 时的链接环节是决定这些动态链接库的关键。
+rustc 在编译 mini-qemu 时，编译过程是直接调用 C 编译器完成的。
+通过指定 C 编译器为 Buildroot 提供的交叉编译器，可以确保链接到正确的 aarch64 架构的动态链接库。
+这些动态链接库在 Buildroot 构建的 Linux 系统镜像中已经包含。
+
+对 buildroot 项目的使用(具体每一步都干了什么目前还不太清楚)
+1. 下载 Buildroot 源码
+   git clone
+2. 配置 Buildroot
+   make menuconfig
+3. 修改 Linux kernel 配置
+   make linux-menuconfig
+4. 开始编译
+   make -j$(nproc)
+5. 编译完成后，Buildroot 会在 output/images 目录下生成 Linux 内核镜像（Image）和根文件系统镜像（rootfs.ext4）。
+
+
+一段代码写出来之后，他用到哪些动态链接库，为什么会在编译期决定？
+自己编写的代码会调用一些外部库函数，编译期发现这些函数只有声明没有定义，就会在编译产物中留下对这些函数的引用（等待被重定向或者被指定动态链接库）。
+链接器会找到实现这些函数的动态链接库，动态链接库中往往有多个版本的对这个函数的不同实现，链接器会选择最新的版本，把这个版本号记录在编译产物中对应的引用位置。
+编译产物实际运行时，会在运行环境中的动态链接库中寻找对应版本的函数实现。如果运行环境中动态链接库版本过老，找不到对应版本的函数实现，就会报错。
+
+如果要把你的总结修改得天衣无缝，应该是这样的：
+
+1. 编码阶段：通过 #include 和函数调用，声明了对外部功能的需求意图。
+2. 构建配置阶段：通过编译器参数（如 -lfoo），指定了满足该意图的动态库文件名（如 libfoo.so）。
+3. 链接阶段（编译期）：
+链接器找到对应的 .so 文件。
+发现其中有多个版本的函数实现。
+链接器选择最新/默认的版本（例如 func@@V2）。
+链接器将库的文件名（SONAME）和函数的具体版本号同时“烙印”在编译产物中。
+4. 运行阶段：
+加载器根据“烙印”的库文件名加载运行环境中的 .so。
+加载器根据“烙印”的版本号寻找对应的函数实现。
+如果环境里的库太老（没有该版本号），报错。
+
+也就是构建时，我告诉编译器（或者依赖编译器的默认配置）需要哪些动态链接库，链接期这些库的名字和提供的函数实现的版本会被烙印在编译产物中，运行时，会在运行环境中找同样名字的动态链接库，并在其中找同样版本的函数实现。
+
+具体为什么用 buildroot 下面的 gcc 来链接，产物所依赖的动态链接库就是测试环境 rootfs 中所具备的了？

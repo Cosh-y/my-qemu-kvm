@@ -1,0 +1,6 @@
+# Kbuild file for mini_kvm kernel module
+
+obj-m := mini_kvm.o
+mini_kvm-objs := mini_kvm_module.o
+
+ccflags-y := -I$(src)

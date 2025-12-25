@@ -1,0 +1,40 @@
+# Build directories
+build/
+target/
+
+# Rust
+**/*.rs.bk
+*.pdb
+
+# C/C++
+*.o
+*.o*
+*.mod*
+*.cmd
+*.ko
+*.symvers
+*.a
+*.so
+*.dylib
+*.out
+*.elf
+*.bin
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Linux
+*~
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp

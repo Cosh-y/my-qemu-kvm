@@ -1,0 +1,18 @@
+[package]
+name = "mini-qemu"
+version = "0.1.0"
+edition = "2021"
+authors = ["MiniKVM Project"]
+
+[[bin]]
+name = "mini-qemu"
+path = "src/main.rs"
+
+[dependencies]
+libc = "0.2"
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3
