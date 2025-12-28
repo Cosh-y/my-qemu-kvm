@@ -107,6 +107,7 @@ impl VmExitReason {
 pub struct MiniKvm {
     device: File,
     guest_mem: Option<Vec<u8>>,
+    guest_phys_addr: u64,
 }
 
 impl MiniKvm {
@@ -119,6 +120,7 @@ impl MiniKvm {
         Ok(MiniKvm {
             device,
             guest_mem: None,
+            guest_phys_addr: 0,
         })
     }
     
@@ -172,6 +174,7 @@ impl MiniKvm {
     }
     
     pub fn allocate_memory(&mut self, guest_phys_addr: u64, size: usize) -> io::Result<()> {
+        self.guest_phys_addr = guest_phys_addr;
         // Allocate userspace memory
         let mut mem = vec![0u8; size];
         
@@ -206,6 +209,25 @@ impl MiniKvm {
                 ));
             }
             mem[..data.len()].copy_from_slice(data);
+            
+            // Sync with kernel to ensure guest sees the code
+            let region = MiniKvmMemRegion {
+                guest_phys_addr: self.guest_phys_addr,
+                memory_size: mem.len() as u64,
+                userspace_addr: mem.as_ptr() as u64,
+            };
+            
+            unsafe {
+                let ret = libc::ioctl(
+                    self.device.as_raw_fd(),
+                    MINIKVM_SET_MEM,
+                    &region as *const MiniKvmMemRegion,
+                );
+                if ret < 0 {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+            
             Ok(())
         } else {
             Err(io::Error::new(

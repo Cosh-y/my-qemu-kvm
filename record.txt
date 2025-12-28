@@ -55,3 +55,32 @@ rustc 在编译 mini-qemu 时，编译过程是直接调用 C 编译器完成的
 也就是构建时，我告诉编译器（或者依赖编译器的默认配置）需要哪些动态链接库，链接期这些库的名字和提供的函数实现的版本会被烙印在编译产物中，运行时，会在运行环境中找同样名字的动态链接库，并在其中找同样版本的函数实现。
 
 具体为什么用 buildroot 下面的 gcc 来链接，产物所依赖的动态链接库就是测试环境 rootfs 中所具备的了？
+
+HostOS 使用 PSCI 协议进行多核启动时可能存在的问题
+如果使用 SMC 调用 EL3 层的功能，那么没什么问题；如果使用 HVC 调用 EL2 层的功能，因为 EL2 stub 已经被我们替换了，我们也没有实现相应的功能，所以可能有问题。
+
+GuestOS 想启动从核呢？我们现在不支持这么复杂的 GuestOS.
+
+qemu 中查看寄存器状态
+
+m@m-ThinkPad-T14-Gen-2i:~/文档/mykvm$ file ~/buildroot/output/build/linux-6.12.47/vmlinux
+/home/m/buildroot/output/build/linux-6.12.47/vmlinux: ELF 64-bit LSB pie executable, ARM aarch64, version 1 (SYSV), statically linked, BuildID[sha1]=6a9baa2efeedc511de4d5626870e637bf69ccf26, not stripped
+m@m-ThinkPad-T14-Gen-2i:~/文档/mykvm$ file ~/buildroot/output/images/Image
+/home/m/buildroot/output/images/Image: Linux kernel ARM64 boot executable Image, little-endian, 4K pages
+
+synchronous exception 的处理逻辑，单独处理 hvc
+
+virt_to_phys 的局限：virt_to_phys 通常只适用于线性映射区域（Linear Mapping，如 kmalloc 分配的内存）。对 vmalloc 区域的地址使用 virt_to_phys 可能会得到错误的物理地址。
+
+我写了一段汇编代码，想让他运行在 el2,处理上层的 hvc 调用。我使用 hvc_set_vectors 将其设置到 vbar_el2（先使用 virt_to_phys 获取其物理地址） ，但迟迟不能正常运行。
+有人说我这段作为内核模块的汇编代码，位于一段 vmalloc 开辟的内存上，他不一定位于连续的物理内存上，这是事实吗？会影响吗？
+
+我把我的代码整体拷贝到另一个物理地址上，他还能正确运行吗？代码里的跳转等操作，使用的会是虚拟地址吗？
+位置无关代码（Position Independent Code, PIC）
+
+在设置 vbar_el2 时，要注意 vbar_el2 寄存器是 Per-CPU 的，所以需要利用 Linux 的接口，在每个 CPU 上分别设置 vbar_el2。
+
+关于 Arm 中的 sp_elx
+我们在进入 GuestOS 前，会设置好 sp_el1 为 GuestOS 的栈顶地址。但在使用 hvc 进入 el2 stub 前，我们没有设置 sp_el2。
+这是因为现在的 el2 stub 使用纯汇编代码，不会使用栈，所以不需要设置 sp_el2。
+但如果 el2 stub 中使用了 C 代码，或者需要使用栈，那么就需要在进入 el2 stub 前，设置好 sp_el2 了。

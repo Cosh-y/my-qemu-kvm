@@ -25,12 +25,13 @@ QEMU := qemu-system-aarch64
 KERNEL := $(BUILDROOT_IMAGES)/Image
 ROOTFS := $(BUILDROOT_IMAGES)/rootfs.ext4
 QEMU_FLAGS := -M virt,gic-version=3,virtualization=on \
+			  -s \
               -cpu cortex-a57 \
               -nographic \
               -smp 2 \
               -m 2048 \
               -kernel $(KERNEL) \
-              -append "root=/dev/vda rw console=ttyAMA0" \
+              -append "root=/dev/vda rw console=ttyAMA0 kvm-arm.mode=none" \
               -drive if=none,file=$(ROOTFS),format=raw,id=hd0 \
               -device virtio-blk-device,drive=hd0
 

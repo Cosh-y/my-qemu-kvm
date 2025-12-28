@@ -1,6 +1,15 @@
 # Kbuild file for mini_kvm kernel module
+#
+# This builds the full KVM implementation with:
+# - EL2 stub for HVC calls (kvm_el2_stub.S)
+# - HVC call wrappers (kvm_hvc.c)
+# - Stage-2 page table management
+# - System register context switching
 
 obj-m := mini_kvm.o
-mini_kvm-objs := mini_kvm_module.o
+mini_kvm-objs := mini_kvm_module.o kvm_el2_stub.o kvm_hvc.o
+
+# Uncomment to use the old simulated version instead:
+# mini_kvm-objs := mini_kvm_module_old.o
 
 ccflags-y := -I$(src)

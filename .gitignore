@@ -38,3 +38,6 @@ target/
 
 # Temporary files
 *.tmp
+
+# docs
+*.md
