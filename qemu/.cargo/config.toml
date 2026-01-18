@@ -1,8 +1,6 @@
 [target.aarch64-unknown-linux-gnu]
-# 关键：指定 Linker 为 Buildroot 提供的 GCC
-# 请将下面的路径修改为你实际的 Buildroot 路径
-linker = "/home/m/buildroot/output/host/bin/aarch64-buildroot-linux-gnu-gcc"
+linker = "aarch64-linux-gnu-gcc"
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=-static"]
 
 [build]
-# 设置默认编译目标为 ARM64，这样你就不用每次输 --target 了
 target = "aarch64-unknown-linux-gnu"

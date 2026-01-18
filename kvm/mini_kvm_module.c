@@ -32,6 +32,10 @@ extern char __kvm_el2_stub_end[];
 /* Global flag: true if using HVC calls, false if direct EL2 access */
 static bool use_hvc_calls = false;
 
+/* Pointer to the physically contiguous memory allocated for EL2 stub */
+static void *el2_stub_buffer = NULL;
+static unsigned int el2_stub_order = 0;
+
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("MiniKVM");
 MODULE_DESCRIPTION("Full KVM module for ARM64 with stage-2 paging");
@@ -214,33 +218,45 @@ static void __init_el2_on_cpu(void *info)
 static int init_el2_hvc(void)
 {
     unsigned long stub_vbar;
+    unsigned long stub_size;
     
     pr_info("mini_kvm: Initializing EL2 via HVC calls\n");
     
-    /* 
-     * CRITICAL: __kvm_el2_stub_vectors is in module memory (vmalloc).
-     * virt_to_phys() may not work correctly for vmalloc addresses.
-     * We must use vmalloc_to_page() to get the physical address.
-     */
-    struct page *stub_page = vmalloc_to_page(&__kvm_el2_stub_vectors);
-    if (!stub_page) {
-        pr_err("mini_kvm: Failed to get page for vector table\n");
-        return -EFAULT;
-    }
-    stub_vbar = page_to_phys(stub_page) + offset_in_page(&__kvm_el2_stub_vectors);
+    /* Calculate size of the stub (code + data) */
+    stub_size = (unsigned long)__kvm_el2_stub_end - (unsigned long)__kvm_el2_stub_vectors;
     
-    /* Print vector table address information */
-    unsigned long stub_size = (unsigned long)__kvm_el2_stub_end - (unsigned long)__kvm_el2_stub_vectors;
+    /* Calculate required order for allocation */
+    el2_stub_order = get_order(stub_size);
+    
+    /* 
+     * CRITICAL: Allocate physically contiguous memory for the EL2 stub.
+     * The module memory (vmalloc) is not physically contiguous, which causes
+     * execution issues when running with MMU disabled at EL2 (or identity mapped).
+     * __get_free_pages returns page-aligned (4KB) physically contiguous memory.
+     */
+    el2_stub_buffer = (void *)__get_free_pages(GFP_KERNEL | __GFP_ZERO, el2_stub_order);
+    if (!el2_stub_buffer) {
+        pr_err("mini_kvm: Failed to allocate contiguous memory for EL2 stub\n");
+        return -ENOMEM;
+    }
+    
+    pr_info("mini_kvm: Allocated %lu bytes (order %d) for EL2 stub at %px\n",
+            stub_size, el2_stub_order, el2_stub_buffer);
+            
+    /* Copy the stub code and data to our contiguous buffer */
+    memcpy(el2_stub_buffer, __kvm_el2_stub_vectors, stub_size);
+    
+    /* Get physical address of the buffer */
+    stub_vbar = virt_to_phys(el2_stub_buffer);
+    
     pr_info("mini_kvm: Vector table virtual address: %px - %px (size: %lu bytes / 0x%lx)\n",
             __kvm_el2_stub_vectors, __kvm_el2_stub_end, stub_size, stub_size);
-    pr_info("mini_kvm: Vector table physical start: 0x%lx (vmalloc, may be non-contiguous)\n",
-            stub_vbar);
+    pr_info("mini_kvm: Copied vector table physical start: 0x%lx\n", stub_vbar);
     
-    /* Clean instruction cache to ensure CPU fetches latest code
-     * This is CRITICAL before calling kvm_hvc_init_hyp */
+    /* Clean instruction cache for the new buffer to ensure CPU fetches correct code */
     pr_info("mini_kvm: Cleaning instruction cache for vector table\n");
-    flush_icache_range((unsigned long)__kvm_el2_stub_vectors, 
-                       (unsigned long)__kvm_el2_stub_end);
+    flush_icache_range((unsigned long)el2_stub_buffer, 
+                       (unsigned long)el2_stub_buffer + stub_size);
     
     /* Run initialization on ALL CPUs */
     cpus_read_lock();
@@ -518,15 +534,15 @@ static int handle_vm_exit(struct kvm_vcpu *vcpu, struct minikvm_run_state *run_s
     /* Extract exception class from ESR_EL2 [31:26] */
     esr_ec = (esr >> 26) & 0x3F;
     
-    pr_info("mini_kvm: VM exit - ESR_EL2=0x%llx, EC=0x%x, PC=0x%llx\n",
-            esr, esr_ec, vcpu->regs.pc);
+    // pr_info("mini_kvm: VM exit - ESR_EL2=0x%llx, EC=0x%x, PC=0x%llx\n",
+    //         esr, esr_ec, vcpu->regs.pc);
     
     switch (esr_ec) {
     case 0x24:  /* Data Abort from lower EL */
     case 0x20:  /* Instruction Abort from lower EL */
         /* Stage-2 fault */
-        pr_info("mini_kvm: Stage-2 fault - FAR=0x%llx, HPFAR=0x%llx\n",
-                vcpu->far_el2, vcpu->hpfar_el2);
+        // pr_info("mini_kvm: Stage-2 fault - FAR=0x%llx, HPFAR=0x%llx\n",
+        //         vcpu->far_el2, vcpu->hpfar_el2);
         
         /* For MMIO, this is expected */
         run_state->exit_reason = MINIKVM_EXIT_MMIO;
@@ -569,7 +585,7 @@ static int minikvm_run(struct kvm_vm *vm, struct minikvm_run_state __user *urun_
         return -EINVAL;
     }
     
-    pr_info("mini_kvm: Running vCPU at PC=0x%llx\n", vcpu->regs.pc);
+    // pr_info("mini_kvm: Running vCPU at PC=0x%llx\n", vcpu->regs.pc);
     
     /* 
      * Call assembly world switch function.
@@ -770,6 +786,12 @@ static int __init minikvm_init(void)
 /* Module cleanup */
 static void __exit minikvm_exit(void)
 {
+    /* Free EL2 stub memory if allocated */
+    if (el2_stub_buffer) {
+        free_pages((unsigned long)el2_stub_buffer, el2_stub_order);
+        pr_info("mini_kvm: Freed EL2 stub memory\n");
+    }
+
     misc_deregister(&minikvm_dev);
     pr_info("mini_kvm: Module unloaded\n");
 }

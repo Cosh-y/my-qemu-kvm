@@ -84,3 +84,18 @@ virt_to_phys 的局限：virt_to_phys 通常只适用于线性映射区域（Lin
 我们在进入 GuestOS 前，会设置好 sp_el1 为 GuestOS 的栈顶地址。但在使用 hvc 进入 el2 stub 前，我们没有设置 sp_el2。
 这是因为现在的 el2 stub 使用纯汇编代码，不会使用栈，所以不需要设置 sp_el2。
 但如果 el2 stub 中使用了 C 代码，或者需要使用栈，那么就需要在进入 el2 stub 前，设置好 sp_el2 了。
+
+需安装 rustc bindgen-cli clang llvm 和 交叉编译环境
+
+make LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- menuconfig
+需配置 rust support / rust samples / virtualization support & no kvm enable
+make LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j8
+
+qemu-system-aarch64 \
+  -machine virt \
+  -cpu cortex-a57 \
+  -m 512M \
+  -kernel ~/chy/linux-6.18.5/arch/arm64/boot/Image \
+  -drive file=/home/m/chy/busybox-1.36.1/disk.img,format=raw,id=hd0,if=virtio \
+  -append "root=/dev/vda1 console=ttyAMA0 rw" \
+  -nographic

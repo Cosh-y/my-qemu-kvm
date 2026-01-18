@@ -663,24 +663,23 @@ SYM_CODE_START_LOCAL(hvc_kvm_read_sysreg)
     eret
 SYM_CODE_END(hvc_kvm_read_sysreg)
 
-/* End of code section marker */
-.global __kvm_el2_stub_end
-__kvm_el2_stub_end:
-
 /*
  * Data section - Per-CPU host context storage
  * 
- * Each CPU has its own dedicated storage for host context to prevent
- * overwrites when multiple CPUs are running VMs simultaneously.
- * 
- * Structure: __kvm_host_contexts[MAX_CPUS][HOST_CONTEXT_SIZE]
- * - Each entry contains: host_regs (96 bytes) + host_sysregs (72 bytes) = 168 bytes
- * - Total size: MAX_CPUS * 168 bytes = 8 * 168 = 1344 bytes
+ * Each CPU has its own dedicated storage for host context.
+ * We place it in the TEXT section to ensure it remains physically 
+ * contiguous with the code when copied to a specific memory region.
+ * Since we copy the stub to a RWX buffer (physically contiguous),
+ * this effectively becomes writable data.
  */
-.data
 .align 3
 
 /* Per-CPU host context storage */
 SYM_DATA_START(__kvm_host_contexts)
     .space (MAX_CPUS * HOST_CONTEXT_SIZE)  /* 8 CPUs * 168 bytes = 1344 bytes */
 SYM_DATA_END(__kvm_host_contexts)
+
+/* End of code/data section marker */
+.global __kvm_el2_stub_end
+__kvm_el2_stub_end:
+
