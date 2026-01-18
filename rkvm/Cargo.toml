@@ -1,0 +1,15 @@
+[package]
+name = "rkvm"
+version = "0.1.0"
+edition = "2021"
+authors = ["MiniKVM"]
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+kernel = { path = "../kernel" }
+
+[profile.release]
+panic = "abort"
+lto = true

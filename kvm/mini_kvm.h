@@ -31,9 +31,9 @@ typedef uint64_t __u64;
 /* Guest register state (ARM64) */
 struct minikvm_regs {
     __u64 x[31];            /* General purpose registers x0-x30 */
-    __u64 sp;               /* Stack pointer */
     __u64 pc;               /* Program counter */
     __u64 pstate;           /* Processor state */
+    __u64 sp;               /* Stack pointer */
 };
 
 /* Memory region mapping */

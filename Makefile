@@ -29,7 +29,7 @@ CARGO_TARGET := aarch64-unknown-linux-gnu
 
 .PHONY: all clean kvm rkvm qemu guest deploy mount umount run
 
-all: kvm qemu guest
+all: kvm rkvm qemu guest
 
 # Build C kernel module
 kvm:
@@ -63,8 +63,9 @@ umount:
 
 # Deploy files to rootfs
 deploy: all mount
-	@sudo mkdir -p $(DEPLOY_ROOT)/kvm $(DEPLOY_ROOT)/qemu $(DEPLOY_ROOT)/guest
+	@sudo mkdir -p $(DEPLOY_ROOT)/kvm $(DEPLOY_ROOT)/rkvm $(DEPLOY_ROOT)/qemu $(DEPLOY_ROOT)/guest
 	@sudo cp kvm/mini_kvm.ko $(DEPLOY_ROOT)/kvm/
+	@sudo cp rkvm/rkvm.ko $(DEPLOY_ROOT)/rkvm/
 	@sudo cp qemu/target/$(CARGO_TARGET)/release/mini-qemu $(DEPLOY_ROOT)/qemu/
 	@sudo cp guest/guest.bin $(DEPLOY_ROOT)/guest/
 	@sync
@@ -82,3 +83,4 @@ clean:
 	@rm -f guest/guest.o guest/guest.bin
 	@rm -f kvm/*.o kvm/*.ko kvm/*.mod kvm/*.mod.c kvm/.*.cmd kvm/Module.symvers kvm/modules.order
 	@rm -rf kvm/.tmp_versions
+	@rm -f rkvm/*.o rkvm/*.ko rkvm/*.mod rkvm/*.mod.c rkvm/.*.cmd rkvm/Module.symvers rkvm/modules.order

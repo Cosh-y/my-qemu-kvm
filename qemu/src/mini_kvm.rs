@@ -44,9 +44,9 @@ const MINIKVM_SET_MEM: u64 = request_code_write!(MINIKVM_MAGIC, 6, std::mem::siz
 #[derive(Debug, Clone, Default)]
 pub struct MiniKvmRegs {
     pub x: [u64; 31],
-    pub sp: u64,
     pub pc: u64,
     pub pstate: u64,
+    pub sp: u64,
 }
 
 #[repr(C)]
@@ -115,7 +115,7 @@ impl MiniKvm {
         let device = OpenOptions::new()
             .read(true)
             .write(true)
-            .open("/dev/mini_kvm")?;
+            .open("/dev/rkvm")?;
         
         Ok(MiniKvm {
             device,

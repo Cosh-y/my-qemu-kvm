@@ -1,0 +1,14 @@
+# Kbuild file for rkvm kernel module (Rust-for-Linux implementation)
+#
+# This builds the Rust KVM implementation with:
+# - Rust code (compiled to librkvm.a via cargo)
+# - EL2 stub for HVC calls (kvm_el2_stub.S)
+# - Integration between Rust and assembly
+
+obj-m := rkvm.o
+
+# 2. 定义 rkvm.o 由哪些部分组成
+#    Kbuild 会自动根据后缀识别：
+#    - src/lib.o      -> 对应 Rust 源码 src/lib.rs
+#    - kvm_el2_stub.o -> 对应汇编源码 kvm_el2_stub.S
+rkvm-y := src/lib.o kvm_el2_stub.o rkvm_glue.o

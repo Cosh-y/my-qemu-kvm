@@ -1,0 +1,10 @@
+[build]
+target = "aarch64-unknown-linux-gnu"
+
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-buildroot-linux-gnu-gcc"
+rustflags = ["-C", "link-arg=-nostartfiles"]
+
+[env]
+# Ensure the Buildroot toolchain is used
+PATH = "/home/m/buildroot/output/host/bin:$PATH"
