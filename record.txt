@@ -99,3 +99,6 @@ qemu-system-aarch64 \
   -drive file=/home/m/chy/busybox-1.36.1/disk.img,format=raw,id=hd0,if=virtio \
   -append "root=/dev/vda1 console=ttyAMA0 rw" \
   -nographic
+
+反汇编 .o 查看 kvm_el2_stub.S 各指令的地址
+aarch64-linux-gnu-objdump -d rkvm/kvm_el2_stub.o

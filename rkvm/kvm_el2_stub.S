@@ -282,8 +282,12 @@ SYM_CODE_START_LOCAL(guest_sync_exit)
      * CRITICAL: Save Guest x18 to SP_EL2 temporarily.
      * We need x18 to hold the VCPU pointer from TPIDR_EL2.
      * If we don't save Guest x18 first, it will be lost!
+     * 
+     * NOTE: We use 'mov sp, x18' instead of 'msr sp_el2, x18' because
+     * we are in EL2h mode (SP_EL2 is active). Accessing the active SP
+     * via MSR/MRS is CONSTRAINED UNPREDICTABLE.
      */
-    msr sp_el2, x18
+    mov sp, x18
     
     /* Get vcpu pointer from TPIDR_EL2 */
     mrs x18, tpidr_el2
@@ -304,10 +308,10 @@ SYM_CODE_START_LOCAL(guest_sync_exit)
     
     /* 
      * Special handling for x18 and x19:
-     * We need to retrieve Guest x18 from SP_EL2.
+     * We need to retrieve Guest x18 from SP_EL2 (accessed via sp).
      * We can use x0 as a temporary register since x0 is already saved.
      */
-    mrs x0, sp_el2          /* x0 = Guest x18 */
+    mov x0, sp              /* x0 = Guest x18 (from SP) */
     stp x0, x19, [x18, #144] /* Save Guest x18 and x19 */
     
     /* We don't need to restore x0, as we are exiting to host */
@@ -544,15 +548,9 @@ SYM_CODE_END(hvc_set_vectors)
  * 6. On guest exception -> trap to guest_sync_exit above
  * 7. guest_sync_exit saves guest state and returns here
  */
-SYM_CODE_START_LOCAL(hvc_kvm_vcpu_run)
-    /* DEBUG: Save marker that we entered this handler */
-    mov x20, #0x000A
-    
+SYM_CODE_START_LOCAL(hvc_kvm_vcpu_run)    
     /* Save vcpu pointer */
     mov x18, x1
-    
-    /* DEBUG: Mark that we saved vcpu pointer */
-    mov x20, #0x000B
     
     /* Get CPU ID from MPIDR_EL1 for per-CPU storage */
     mrs x0, mpidr_el1
@@ -644,9 +642,6 @@ SYM_CODE_START_LOCAL(hvc_kvm_vcpu_run)
     /* Set guest context marker - CRITICAL for exception handling */
     msr tpidr_el2, x18
     
-    /* DEBUG: Mark that we're about to ERET to guest */
-    mov x20, #0x000C
-    
     /* Load guest PC and PSTATE for ERET */
     add x0, x18, #VCPU_REGS_OFFSET
     ldr x1, [x0, #248]      /* Guest PC */
@@ -670,10 +665,7 @@ SYM_CODE_START_LOCAL(hvc_kvm_vcpu_run)
     ldp x26, x27, [x0, #208]
     ldp x28, x29, [x0, #224]
     ldr x30, [x0, #240]
-    
-    /* DEBUG: Save marker just before loading x0,x1 and ERET */
-    mov x10, #0x000D
-    
+
     ldp x0, x1, [x0, #0]
     
     /* Enter guest at EL1 */

@@ -80,7 +80,7 @@ impl MiscDevice for RKvmDevice {
     }
 
     fn ioctl(me: Pin<&RKvmDevice>, _file: &File, cmd: u32, arg: usize) -> Result<isize> {
-        dev_info!(me.dev, "RKVM: IOCTL command 0x{:x}\n", cmd);
+        // dev_info!(me.dev, "RKVM: IOCTL command 0x{:x}\n", cmd);
         
         match cmd {
             RKVM_CREATE_VM => me.create_vm()?,
@@ -267,7 +267,6 @@ impl RKvmDevice {
     fn handle_vm_exit(&self, vcpu: &mut crate::vcpu::RKvmVcpu, run_state: &mut RunState) -> Result {
         let esr = vcpu.esr_el2;
         let esr_ec = (esr >> 26) & 0x3F;
-        dev_info!(self.dev, "RKVM: VM exit, ESR_EL2=0x{:x}, EC=0x{:x}\n", esr, esr_ec);
         match esr_ec {
             0x24 | 0x20 => {
                 // Data Abort or Instruction Abort from lower EL
