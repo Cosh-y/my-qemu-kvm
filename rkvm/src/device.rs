@@ -35,9 +35,8 @@ const RKVM_SET_MEM: u32 = _IOW::<MemRegion>(RKVM_MAGIC, 6);
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 struct MemRegion {
-    guest_phys_addr: u64,
-    memory_size: u64,
-    userspace_addr: u64,
+    userspace_addr: VirtAddr,
+    memory_size: MemSize,
 }
 
 // SAFETY: MemRegion contains no padding bytes and all fields are u64, so any bit pattern is valid.
@@ -208,13 +207,9 @@ impl RKvmDevice {
         
         let region = reader.read::<MemRegion>()?;
         
-        dev_info!(self.dev, "RKVM: Set memory region: GPA=0x{:x}, size=0x{:x}, UVA=0x{:x}\n",
-                  region.guest_phys_addr, region.memory_size, region.userspace_addr);
-        
         vm.set_memory(
-            region.guest_phys_addr,
-            region.userspace_addr as VirtAddr,
-            region.memory_size as MemSize
+            region.userspace_addr,
+            region.memory_size
         )?;
         
         Ok(0)

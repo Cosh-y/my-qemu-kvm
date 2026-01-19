@@ -52,9 +52,8 @@ pub struct MiniKvmRegs {
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct MiniKvmMemRegion {
-    pub guest_phys_addr: u64,
-    pub memory_size: u64,
     pub userspace_addr: u64,
+    pub memory_size: u64,
 }
 
 #[repr(C)]
@@ -106,8 +105,8 @@ impl VmExitReason {
 
 pub struct MiniKvm {
     device: File,
-    guest_mem: Option<Vec<u8>>,
-    guest_phys_addr: u64,
+    // guest_mem: Option<Vec<u8>>,
+    // guest_phys_addr: u64,
 }
 
 impl MiniKvm {
@@ -119,8 +118,8 @@ impl MiniKvm {
         
         Ok(MiniKvm {
             device,
-            guest_mem: None,
-            guest_phys_addr: 0,
+            // guest_mem: None,
+            // guest_phys_addr: 0,
         })
     }
     
@@ -173,15 +172,16 @@ impl MiniKvm {
         Ok(regs)
     }
     
-    pub fn allocate_memory(&mut self, guest_phys_addr: u64, size: usize) -> io::Result<()> {
-        self.guest_phys_addr = guest_phys_addr;
-        // Allocate userspace memory
-        let mut mem = vec![0u8; size];
-        
+    // pub fn allocate_memory(&mut self, guest_phys_addr: u64, size: usize) -> io::Result<()> {
+        // TODO: Alloc Guest VM's memory in Qemu, but not in kernel module
+        // so that we can share memory between vcpus of one same VM.
+    // }
+    
+    pub fn write_guest_memory(&mut self, data: &[u8]) -> io::Result<()> {
+        // ask kernel module to write guest code into guest memory
         let region = MiniKvmMemRegion {
-            guest_phys_addr,
-            memory_size: size as u64,
-            userspace_addr: mem.as_ptr() as u64,
+            userspace_addr: data.as_ptr() as u64,
+            memory_size: data.len() as u64,
         };
         
         unsafe {
@@ -195,46 +195,7 @@ impl MiniKvm {
             }
         }
         
-        // Keep the memory alive
-        self.guest_mem = Some(mem);
         Ok(())
-    }
-    
-    pub fn write_guest_memory(&mut self, data: &[u8]) -> io::Result<()> {
-        if let Some(ref mut mem) = self.guest_mem {
-            if data.len() > mem.len() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "Data too large for guest memory",
-                ));
-            }
-            mem[..data.len()].copy_from_slice(data);
-            
-            // Sync with kernel to ensure guest sees the code
-            let region = MiniKvmMemRegion {
-                guest_phys_addr: self.guest_phys_addr,
-                memory_size: mem.len() as u64,
-                userspace_addr: mem.as_ptr() as u64,
-            };
-            
-            unsafe {
-                let ret = libc::ioctl(
-                    self.device.as_raw_fd(),
-                    MINIKVM_SET_MEM,
-                    &region as *const MiniKvmMemRegion,
-                );
-                if ret < 0 {
-                    return Err(io::Error::last_os_error());
-                }
-            }
-            
-            Ok(())
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Guest memory not allocated",
-            ))
-        }
     }
     
     pub fn run(&mut self) -> io::Result<MiniKvmRunState> {

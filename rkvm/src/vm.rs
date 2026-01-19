@@ -109,7 +109,7 @@ impl RKvmVm {
     }
     
     /// Copy guest code from userspace
-    pub fn set_memory(&mut self, guest_phys_addr: GuestPhysAddr, userspace_addr: VirtAddr, size: MemSize) -> Result {
+    pub fn set_memory(&mut self, userspace_addr: VirtAddr, size: MemSize) -> Result {
         if size > self.guest_mem_size {
             pr_warn!("RKVM: Requested size larger than allocated memory\n");
             return Err(EINVAL);

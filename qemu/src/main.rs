@@ -103,12 +103,12 @@ fn main() {
     }
     println!("[VMM] vCPU created successfully");
 
-    println!("[VMM] Allocating guest memory ({} bytes)...", GUEST_MEM_SIZE);
-    if let Err(e) = kvm.allocate_memory(GUEST_ENTRY, GUEST_MEM_SIZE) {
-        eprintln!("[VMM] Failed to allocate memory: {}", e);
-        std::process::exit(1);
-    }
-    println!("[VMM] Guest memory allocated at GPA 0x{:x}", GUEST_ENTRY);
+    // println!("[VMM] Allocating guest memory ({} bytes)...", GUEST_MEM_SIZE);
+    // if let Err(e) = kvm.allocate_memory(GUEST_ENTRY, GUEST_MEM_SIZE) {
+    //     eprintln!("[VMM] Failed to allocate memory: {}", e);
+    //     std::process::exit(1);
+    // }
+    // println!("[VMM] Guest memory allocated at GPA 0x{:x}", GUEST_ENTRY);
 
     println!("[VMM] Loading guest binary: {}", guest_binary);
     let guest_code = match load_guest_binary(guest_binary) {
