@@ -9,6 +9,12 @@ use std::fs::{File, OpenOptions};
 use std::os::unix::io::AsRawFd;
 use std::io;
 
+// Import architecture-specific register definitions
+#[cfg(target_arch = "aarch64")]
+use crate::arch::arm64::MiniKvmRegs;
+#[cfg(target_arch = "x86_64")]
+use crate::arch::x86::MiniKvmRegs;
+
 // ioctl helper macros
 macro_rules! request_code_none {
     ($magic:expr, $nr:expr) => {
@@ -39,20 +45,13 @@ const MINIKVM_GET_REGS: u64 = request_code_read!(MINIKVM_MAGIC, 5, std::mem::siz
 const MINIKVM_SET_MEM: u64 = request_code_write!(MINIKVM_MAGIC, 6, std::mem::size_of::<MiniKvmMemRegion>());
 
 // Rust representations of C structs from mini_kvm.h
-
-#[repr(C)]
-#[derive(Debug, Clone, Default)]
-pub struct MiniKvmRegs {
-    pub x: [u64; 31],
-    pub pc: u64,
-    pub pstate: u64,
-    pub sp: u64,
-}
+// Note: MiniKvmRegs is imported from arch module above
 
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct MiniKvmMemRegion {
-    pub userspace_addr: u64,
+    pub host_virt_addr: u64,
+    pub guest_phys_addr: u64,
     pub memory_size: u64,
 }
 
@@ -105,8 +104,11 @@ impl VmExitReason {
 
 pub struct MiniKvm {
     device: File,
-    // guest_mem: Option<Vec<u8>>,
-    // guest_phys_addr: u64,
+    // hva
+    guest_mem_ptr: Option<*mut libc::c_void>,
+    guest_mem_size: usize,
+    // gpa
+    guest_phys_addr: u64,
 }
 
 impl MiniKvm {
@@ -118,8 +120,9 @@ impl MiniKvm {
         
         Ok(MiniKvm {
             device,
-            // guest_mem: None,
-            // guest_phys_addr: 0,
+            guest_mem_ptr: None,
+            guest_mem_size: 0,
+            guest_phys_addr: 0,
         })
     }
     
@@ -172,18 +175,36 @@ impl MiniKvm {
         Ok(regs)
     }
     
-    // pub fn allocate_memory(&mut self, guest_phys_addr: u64, size: usize) -> io::Result<()> {
-        // TODO: Alloc Guest VM's memory in Qemu, but not in kernel module
-        // so that we can share memory between vcpus of one same VM.
-    // }
-    
-    pub fn write_guest_memory(&mut self, data: &[u8]) -> io::Result<()> {
-        // ask kernel module to write guest code into guest memory
-        let region = MiniKvmMemRegion {
-            userspace_addr: data.as_ptr() as u64,
-            memory_size: data.len() as u64,
+    pub fn allocate_memory(&mut self, guest_phys_addr: u64, size: usize) -> io::Result<()> {
+        // Use mmap to allocate memory for the guest
+        let mem_ptr = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                size,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
+            )
         };
         
+        if mem_ptr == libc::MAP_FAILED {
+            return Err(io::Error::last_os_error());
+        }
+        
+        // Store memory information
+        self.guest_mem_ptr = Some(mem_ptr);
+        self.guest_mem_size = size;
+        self.guest_phys_addr = guest_phys_addr;
+        
+        // Create memory region structure
+        let region = MiniKvmMemRegion {
+            host_virt_addr: mem_ptr as u64,
+            guest_phys_addr,
+            memory_size: size as u64,
+        };
+        
+        // Set memory region via ioctl
         unsafe {
             let ret = libc::ioctl(
                 self.device.as_raw_fd(),
@@ -191,8 +212,43 @@ impl MiniKvm {
                 &region as *const MiniKvmMemRegion,
             );
             if ret < 0 {
+                // Clean up the mmap on failure
+                libc::munmap(mem_ptr, size);
+                self.guest_mem_ptr = None;
+                self.guest_mem_size = 0;
+                self.guest_phys_addr = 0;
                 return Err(io::Error::last_os_error());
             }
+        }
+        
+        Ok(())
+    }
+    
+    pub fn write_guest_memory(&mut self, data: &[u8]) -> io::Result<()> {
+        // Ensure memory has been allocated
+        let mem_ptr = self.guest_mem_ptr.ok_or_else(|| {
+            io::Error::new(io::ErrorKind::Other, "Guest memory not allocated")
+        })?;
+        
+        // Check if data fits in allocated memory
+        if data.len() > self.guest_mem_size {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "Data size ({} bytes) exceeds allocated memory ({} bytes)",
+                    data.len(),
+                    self.guest_mem_size
+                ),
+            ));
+        }
+        
+        // Copy data to guest memory
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                data.as_ptr(),
+                mem_ptr as *mut u8,
+                data.len(),
+            );
         }
         
         Ok(())
@@ -229,6 +285,12 @@ impl MiniKvm {
 
 impl Drop for MiniKvm {
     fn drop(&mut self) {
+        // Unmap guest memory if allocated
+        if let Some(mem_ptr) = self.guest_mem_ptr {
+            unsafe {
+                libc::munmap(mem_ptr, self.guest_mem_size);
+            }
+        }
         // File will be automatically closed
     }
 }

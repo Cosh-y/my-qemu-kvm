@@ -1,0 +1,9 @@
+# Kbuild file for rkvm-x86 kernel module
+# Rust KVM implementation for x86_64 with Intel VT-x
+
+obj-m := rkvm_x86.o
+
+# Components:
+# - src/lib.o: Rust code (compiled via Cargo)
+# - rkvm_x86_glue.o: C wrapper functions
+rkvm_x86-y := src/lib.o rkvm_x86_glue.o

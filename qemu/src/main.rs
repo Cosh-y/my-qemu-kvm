@@ -10,8 +10,13 @@
  */
 
 mod mini_kvm;
+mod arch;
 
-use mini_kvm::{MiniKvm, MiniKvmRegs, VmExitReason};
+use mini_kvm::{MiniKvm, VmExitReason};
+#[cfg(target_arch = "aarch64")]
+use arch::arm64::MiniKvmRegs;
+#[cfg(target_arch = "x86_64")]
+use arch::x86::MiniKvmRegs;
 use std::env;
 use std::fs::File;
 use std::io::Read;
@@ -103,13 +108,12 @@ fn main() {
     }
     println!("[VMM] vCPU created successfully");
 
-    // println!("[VMM] Allocating guest memory ({} bytes)...", GUEST_MEM_SIZE);
-    // if let Err(e) = kvm.allocate_memory(GUEST_ENTRY, GUEST_MEM_SIZE) {
-    //     eprintln!("[VMM] Failed to allocate memory: {}", e);
-    //     std::process::exit(1);
-    // }
-    // println!("[VMM] Guest memory allocated at GPA 0x{:x}", GUEST_ENTRY);
-
+    println!("[VMM] Allocating guest memory ({} bytes)...", GUEST_MEM_SIZE);
+    if let Err(e) = kvm.allocate_memory(GUEST_ENTRY, GUEST_MEM_SIZE) {
+        eprintln!("[VMM] Failed to allocate memory: {}", e);
+        std::process::exit(1);
+    }
+    
     println!("[VMM] Loading guest binary: {}", guest_binary);
     let guest_code = match load_guest_binary(guest_binary) {
         Ok(code) => code,
@@ -124,27 +128,40 @@ fn main() {
         std::process::exit(1);
     }
     
-    println!("[VMM] Loaded {} bytes of guest code", guest_code.len());
-    
     // Write guest code to memory
     if let Err(e) = kvm.write_guest_memory(&guest_code) {
         eprintln!("[VMM] Failed to write guest memory: {}", e);
         std::process::exit(1);
     }
-    println!("[VMM] Guest code written to memory");
+    println!("[VMM] Guest code (len={}) written to memory", guest_code.len());
 
     // Set initial guest registers
     println!("[VMM] Setting initial vCPU state...");
-    let mut regs = MiniKvmRegs::default();
-    regs.pc = GUEST_ENTRY;
-    regs.sp = GUEST_ENTRY + (GUEST_MEM_SIZE as u64) - 16; // Stack at end of memory
-    regs.pstate = 0x3c5; // EL1h, IRQ/FIQ masked
+    
+    #[cfg(target_arch = "aarch64")]
+    let regs = {
+        let mut regs = MiniKvmRegs::default();
+        regs.pc = GUEST_ENTRY;
+        regs.sp = GUEST_ENTRY + (GUEST_MEM_SIZE as u64) - 16;
+        regs.pstate = 0x3c5; // EL1h, IRQ/FIQ masked
+        println!("[VMM] Initial state: PC=0x{:x}, SP=0x{:x}", regs.pc, regs.sp);
+        regs
+    };
+    
+    #[cfg(target_arch = "x86_64")]
+    let regs = {
+        let mut regs = MiniKvmRegs::default();
+        regs.rip = GUEST_ENTRY;
+        regs.rsp = GUEST_ENTRY + (GUEST_MEM_SIZE as u64) - 16;
+        regs.rflags = 0x2; // Reserved bit must be set
+        println!("[VMM] Initial state: RIP=0x{:x}, RSP=0x{:x}", regs.rip, regs.rsp);
+        regs
+    };
     
     if let Err(e) = kvm.set_regs(&regs) {
         eprintln!("[VMM] Failed to set registers: {}", e);
         std::process::exit(1);
     }
-    println!("[VMM] Initial state: PC=0x{:x}, SP=0x{:x}", regs.pc, regs.sp);
 
     // Create UART device
     let mut uart = UartDevice::new();
