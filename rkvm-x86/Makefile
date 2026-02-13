@@ -2,7 +2,7 @@
 # 
 # This Makefile builds the Rust-based KVM module for x86_64/Intel VT-x
 
-LINUX_DIR ?= /home/m/chy/linux-6.18.5
+LINUX_DIR ?= /home/harry/Documents/chy/linux-6.18.5
 
 # Kernel build directory
 KDIR := $(LINUX_DIR)

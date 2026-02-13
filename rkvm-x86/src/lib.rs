@@ -3,25 +3,33 @@
 //! This is a minimal x86_64 KVM implementation using Intel VT-x/VMX
 
 #![no_std]
-#![feature(allocator_api)]
 
 mod types;
+mod wrap;
 mod vmx;
+mod pt;
 mod ept;
 mod vcpu;
 mod vm;
 mod device;
+mod inst;
+mod regs;
+mod x86;
 
 pub use types::*;
 pub use vmx::*;
+pub use pt::*;
 pub use ept::*;
 pub use vcpu::*;
 pub use vm::*;
+pub use wrap::*;
+pub use device::*;
+pub use inst::*;
 
 module! {
     type: RkvmX86Module,
     name: "rkvm_x86",
-    author: "Harry",
+    authors: ["Harry"],
     description: "Simplified x86_64 KVM using Intel VT-x",
     license: "GPL v2",
 }
@@ -48,11 +56,12 @@ impl kernel::Module for RkvmX86Module {
         };
         
         pr_info!("RKVM-x86: Module loaded successfully\n");
-        try_pin_init!(
-            Self {
-                _dev <- MiscDeviceRegistration::register(options),
-            }
-        )
+        Ok(Self {
+            _dev: KBox::pin_init(
+                MiscDeviceRegistration::register(options),
+                GFP_KERNEL
+            )?,
+        })
     }
 }
 

@@ -1,37 +1,44 @@
 //! Virtual Machine management for x86_64
+#![allow(missing_docs)]
 
-use alloc::vec::Vec;
-use alloc::sync::Arc;
 use kernel::{
     prelude::*,
     bindings,
-}
+};
 
 use crate::types::*;
+use crate::device::GuestMemoryMapMessage;
 use crate::ept::EptPageTable;
 use crate::vcpu::X86Vcpu;
+
+unsafe impl Send for PinnedMem {}
+unsafe impl Sync for PinnedMem {}
 
 pub struct PinnedMem {
     /// 保存所有的 page 指针
     /// 在 C 中是 struct page *
-    pages: VVec<*mut bindings::page>, 
+    pages: Vec<*mut bindings::page, kernel::alloc::allocator::Kmalloc>, 
+    pages_len: usize,
     /// 这一段内存的起始 HVA (Host Virtual Address)，用于调试或对齐检查
     hva: VirtAddr,
     /// 这段内存对应的 GPA (Guest Physical Address)
-    gpa: PhysAddr,
+    gpa: GuestPhysAddr,
     /// 内存大小
     size: MemSize,
 }
 
 impl PinnedMem {
     pub fn new(hva: VirtAddr, gpa: GuestPhysAddr, size: MemSize) -> Result<Self> {
-        let page_count = (size + 4095) >> 12;
-        
-        let mut pages = Vec::with_capacity(page_count);
+        let page_count = size >> 12;
+        pr_info!("page_count: {}\n", page_count);
+        let mut pages = Vec::with_capacity(page_count, GFP_KERNEL)?;
+        for _ in 0..page_count {
+            pages.push(core::ptr::null_mut(), GFP_KERNEL)?;
+        }
         
         let pinned_count = unsafe {
             bindings::pin_user_pages_fast(
-                hva as u64,
+                hva,
                 page_count as i32, 
                 bindings::FOLL_WRITE | bindings::FOLL_LONGTERM,
                 pages.as_mut_ptr()
@@ -39,7 +46,7 @@ impl PinnedMem {
         };
 
         if pinned_count < 0 {
-            return Err(Error::from_kernel_errno(pinned_count));
+            return Err(Error::from_errno(pinned_count));
         }
 
         if pinned_count as usize != page_count {
@@ -49,14 +56,12 @@ impl PinnedMem {
                     bindings::unpin_user_page(page);
                 }
             }
-            return Err(Error::ENOMEM);
+            return Err(ENOMEM);
         }
-
-        // 告诉 Vec 我们已经填入了数据
-        unsafe { pages.set_len(pinned_count as usize) };
 
         Ok(Self {
             pages,
+            pages_len: pinned_count as usize,
             hva,
             gpa,
             size,
@@ -64,18 +69,26 @@ impl PinnedMem {
     }
     
     // 获取用于填入 EPT 的物理地址列表
-    pub fn get_phys_addrs(&self) -> Vec<u64> {
-        self.pages.iter().map(|&page| {
-            unsafe { bindings::page_to_phys(page) as u64 }
-        }).collect()
+    pub fn get_phys_addrs(&self) -> Result<Vec<PhysAddr, kernel::alloc::allocator::Kmalloc>> {
+        let mut result = Vec::with_capacity(self.pages_len, GFP_KERNEL)?;
+        for &page in &self.pages {
+            let hva = crate::wrap::page_address(page) as VirtAddr;
+            let pa = crate::wrap::virt_to_phys(hva);
+            result.push(pa, GFP_KERNEL)?;
+        }
+        Ok(result)
     }
 
     pub fn guest_phys_addr_base(&self) -> GuestPhysAddr {
         self.gpa
     }
 
+    pub fn virt_addr_base(&self) -> VirtAddr {
+        self.hva
+    }
+
     pub fn get_pages_count(&self) -> usize {
-        self.pages.len()
+        self.pages_len
     }
 }
 
@@ -91,12 +104,9 @@ impl Drop for PinnedMem {
 
 /// Virtual machine structure
 pub struct X86Vm {
-    /// Guest memory mapping from userspace
-    guest_mem: VVec<PinnedMem>,
-    /// EPT page table
+    guest_mem: Vec<PinnedMem, kernel::alloc::allocator::Kmalloc>,
     ept: EptPageTable,
-    /// VCPUs
-    vcpus: Vec<Arc<Mutex<X86Vcpu>>>,
+    vcpu: Box<X86Vcpu, kernel::alloc::allocator::Kmalloc>,
 }
 
 impl X86Vm {
@@ -108,14 +118,14 @@ impl X86Vm {
         let ept = EptPageTable::new()?;
         
         Ok(Self {
-            guest_mem: VVec::new(),
+            guest_mem: Vec::new(),
             ept,
-            vcpus: Vec::new(),
+            vcpu: Box::new(X86Vcpu::new()?, GFP_KERNEL)?,
         })
     }
     
 
-    pub fn set_memory(&mut self, mapping: GuestMemoryMap) -> Result<()> {
+    pub fn set_memory(&mut self, mapping: &GuestMemoryMapMessage) -> Result<()> {
         pr_info!("RKVM-x86: Setting guest memory:\n");
         pr_info!("  Host VA: 0x{:x}\n", mapping.host_virt_addr);
         pr_info!("  Guest PA: 0x{:x}\n", mapping.guest_phys_addr);
@@ -134,7 +144,7 @@ impl X86Vm {
         )?;
         let num_pages = pin_mem.get_pages_count();
         let mut gpa = pin_mem.guest_phys_addr_base();
-        let hpas: Vec<u64> = pin_mem.get_phys_addrs();
+        let hpas = pin_mem.get_phys_addrs()?;
 
         for i in 0..num_pages {
             
@@ -143,14 +153,10 @@ impl X86Vm {
                 gpa,
                 hpas[i],
                 4096,
-                bindings::EPT_MEM_TYPE_WB | bindings::EPT_FLAG_READ 
-                    | bindings::EPT_FLAG_WRITE | bindings::EPT_FLAG_EXEC,
             )?;
             
-            if i % 256 == 0 {
-                pr_info!("  Mapped page {}/{}: GPA 0x{:x} -> HPA 0x{:x}\n", 
+            pr_info!("  Mapped page {}/{}: GPA 0x{:x} -> HPA 0x{:x}\n", 
                          i + 1, num_pages, gpa, hpas[i]);
-            }
             
             gpa += 4096;
         }
@@ -158,40 +164,32 @@ impl X86Vm {
         pr_info!("RKVM-x86: Mapped {} pages in EPT\n", num_pages);
         
         // Store the mapping
-        self.guest_mem.try_push(pin_mem)?;
+        self.guest_mem.push(pin_mem, GFP_KERNEL)?;
         
         Ok(())
     }
+
+    pub fn get_memory(&self) -> &Vec<PinnedMem, kernel::alloc::allocator::Kmalloc> {
+        &self.guest_mem
+    }
     
     /// Create a new VCPU
-    pub fn create_vcpu(&mut self) -> Result<Arc<Mutex<X86Vcpu>>> {
-        let vcpu_id = self.vcpus.len();
-        let ept_root = self.ept.root_pa();
-        
-        let vcpu = X86Vcpu::new(vcpu_id, ept_root)?;
-        let vcpu = Arc::try_new(Mutex::new(vcpu))?;
-        
-        self.vcpus.try_push(vcpu.clone())?;
-        pr_info!("RKVM-x86: Created VCPU #{}\n", vcpu_id);
-        
-        Ok(vcpu)
+    pub fn create_vcpu(&mut self) -> Result<()> {        
+        // check or do nothing?   
+        Ok(())
     }
     
     /// Get VCPU by ID
-    pub fn get_vcpu(&self, vcpu_id: usize) -> Result<Arc<Mutex<X86Vcpu>>> {
-        self.vcpus.get(vcpu_id)
-            .ok_or(EINVAL)
-            .map(|v| v.clone())
+    pub fn get_vcpu(&self) -> Result<&X86Vcpu> {
+        Ok(&self.vcpu)
     }
-    
-    /// Get EPT root physical address
-    pub fn ept_root(&self) -> PhysAddr {
-        self.ept.root_pa()
+
+    pub fn get_vcpu_mut(&mut self) -> Result<&mut X86Vcpu> {
+        Ok(&mut self.vcpu)
     }
-    
-    /// Get number of VCPUs
-    pub fn num_vcpus(&self) -> usize {
-        self.vcpus.len()
+
+    pub fn get_eptp(&self) -> u64 {
+        self.ept.eptp()
     }
 }
 

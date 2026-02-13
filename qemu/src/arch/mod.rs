@@ -42,11 +42,8 @@ pub trait ArchRegs: Debug + Clone + Default + Sized {
     }
 }
 
-/// Architecture name as string
-pub const ARCH_NAME: &str = {
-    #[cfg(feature = "arch-arm64")]
-    { "ARM64" }
-    
-    #[cfg(feature = "arch-x86")]
-    { "x86_64" }
-};
+#[cfg(feature = "arch-arm64")]
+pub const ARCH_NAME: &str = "arm64";
+
+#[cfg(feature = "arch-x86")]
+pub const ARCH_NAME: &str = "x86";

@@ -21,7 +21,7 @@ use std::env;
 use std::fs::File;
 use std::io::Read;
 
-const GUEST_MEM_SIZE: usize = 4096; // 4KB for minimal test
+const GUEST_MEM_SIZE: usize = 128 * 1024; // 128KB for minimal test
 const GUEST_ENTRY: u64 = 0x40000000; // Guest physical address
 
 struct UartDevice {
@@ -182,7 +182,7 @@ fn main() {
         match kvm.run() {
             Ok(run_state) => {
                 match VmExitReason::from_u32(run_state.exit_reason) {
-                    VmExitReason::Mmio => {
+                    VmExitReason::EPT_VIOLATION => {
                         // Handle MMIO access - no need for unsafe, fields are always present
                         if run_state.mmio.is_write != 0 {
                             // MMIO write - emulate UART output
@@ -193,23 +193,9 @@ fn main() {
                                     run_state.mmio.phys_addr, run_state.mmio.len);
                         }
                     }
-                    VmExitReason::Hlt => {
+                    VmExitReason::HLT => {
                         println!("\n[VMM] Guest halted (WFI instruction)");
                         break;
-                    }
-                    VmExitReason::Shutdown => {
-                        println!("\n[VMM] Guest requested shutdown");
-                        break;
-                    }
-                    VmExitReason::InternalError => {
-                        eprintln!("\n[VMM] Internal error: code={}", run_state.internal_error.error_code);
-                        break;
-                    }
-                    VmExitReason::Unknown => {
-                        // Continue execution for unknown reasons
-                        if iteration % 100 == 0 {
-                            println!("\n[VMM] Unknown exit at iteration {}", iteration);
-                        }
                     }
                 }
             }

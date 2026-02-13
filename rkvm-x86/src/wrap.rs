@@ -6,12 +6,11 @@ use crate::types::*;
 
 // External C functions from rkvm_x86_glue.c
 extern "C" {
-    fn rkvm_x86_get_zeroed_page() -> c_ulong;
-    fn rkvm_x86_free_page(addr: c_ulong);
-    fn rkvm_x86_virt_to_phys(addr: *const c_void) -> u64;
-    fn rkvm_x86_phys_to_virt(addr: u64) -> *mut c_void;
-    fn rkvm_x86_copy_from_user(to: *mut c_void, from: *const c_void, n: c_ulong) -> c_ulong;
-    fn rkvm_x86_copy_to_user(to: *mut c_void, from: *const c_void, n: c_ulong) -> c_ulong;
+    fn rkvm_virt_to_phys(addr: *const c_void) -> u64;
+    fn rkvm_phys_to_virt(addr: u64) -> *mut c_void;
+    fn rkvm_page_address(page: *const bindings::page) -> *mut c_void;
+    fn rkvm_copy_from_user(to: *mut c_void, from: *const c_void, n: c_ulong) -> c_ulong;
+    fn rkvm_copy_to_user(to: *mut c_void, from: *const c_void, n: c_ulong) -> c_ulong;
 }
 
 // Helper for on_each_cpu callback
@@ -62,68 +61,37 @@ where
     Ok(())
 }
 
-/// Convert user virtual address to physical address
-///
-/// This function walks the current process's page tables to translate
-/// a user virtual address to its corresponding physical address.
-///
-/// # Arguments
-/// * `uva` - User virtual address
-///
-/// # Returns
-/// Physical address or error if the address is not mapped
-pub fn user_virt_to_phys(uva: usize) -> Result<PhysAddr> {
-    let phys = unsafe { rkvm_x86_user_virt_to_phys(uva as c_ulong) };
-    
-    if phys == 0 {
-        pr_err!("RKVM-x86: Failed to translate user VA 0x{:x}\n", uva);
-        return Err(EFAULT);
-    }
-    
-    Ok(phys)
-}
-
-/// Get a zeroed page
-pub fn get_zeroed_page() -> Result<usize> {
-    let addr = unsafe { rkvm_x86_get_zeroed_page() };
-    if addr == 0 {
-        Err(ENOMEM)
-    } else {
-        Ok(addr as usize)
-    }
-}
-
-/// Free a page
-pub fn free_page(addr: usize) {
-    unsafe { rkvm_x86_free_page(addr as c_ulong) };
-}
 
 /// Convert kernel virtual address to physical
-pub fn virt_to_phys(addr: usize) -> PhysAddr {
-    unsafe { rkvm_x86_virt_to_phys(addr as *const c_void) }
+pub fn virt_to_phys(addr: VirtAddr) -> PhysAddr {
+    unsafe { rkvm_virt_to_phys(addr as *const c_void) }
 }
 
 /// Convert physical address to kernel virtual
-pub fn phys_to_virt(addr: PhysAddr) -> usize {
-    unsafe { rkvm_x86_phys_to_virt(addr) as usize }
+pub fn phys_to_virt(addr: PhysAddr) -> VirtAddr {
+    unsafe { rkvm_phys_to_virt(addr) as usize }
 }
 
-/// Copy from userspace
-pub fn copy_from_user(to: *mut c_void, from: *const c_void, n: usize) -> Result<()> {
-    let ret = unsafe { rkvm_x86_copy_from_user(to, from, n as c_ulong) };
-    if ret == 0 {
-        Ok(())
-    } else {
-        Err(EFAULT)
-    }
+pub fn page_address(page: *const bindings::page) -> VirtAddr {
+    unsafe { rkvm_page_address(page) as usize }
 }
 
-/// Copy to userspace
-pub fn copy_to_user(to: *mut c_void, from: *const c_void, n: usize) -> Result<()> {
-    let ret = unsafe { rkvm_x86_copy_to_user(to, from, n as c_ulong) };
-    if ret == 0 {
-        Ok(())
-    } else {
-        Err(EFAULT)
+pub fn copy_from_user(to: *mut c_void, from: *const c_void, size: usize) -> Result<()> {
+    let ret = unsafe {
+        rkvm_copy_from_user(to, from, size as c_ulong)
+    };
+    if ret != 0 {
+        return Err(EFAULT);
     }
+    Ok(())
+}
+
+pub fn copy_to_user(to: *mut c_void, from: *const c_void, size: usize) -> Result<()> {
+    let ret = unsafe {
+        rkvm_copy_to_user(to, from, size as c_ulong)
+    };
+    if ret != 0 {
+        return Err(EFAULT);
+    }
+    Ok(())
 }

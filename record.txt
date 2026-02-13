@@ -91,6 +91,26 @@ make LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- menuconfig
 需配置 rust support / rust samples / virtualization support & no kvm enable
 make LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j8
 
+Intel x86_64
+make LLVM=1 menuconfig
+开启 Guneral setup -> Rust support
+开启 virtualization 关闭 kvm support
+可以裁剪的内容：
+A. 显卡和多媒体
+Device Drivers -> Graphics support:
+Device Drivers -> Sound card support:
+B. 网络与无线
+Device Drivers -> Network device support:
+  Wireless LAN
+  Ethernet driver support
+  保留 Virtio network driver
+Networking support
+C. 冷门的文件系统格式
+  保留 ext4 Tmpfs Devtmpfs
+D. USB
+Device Drivers -> USB support:
+make LLVM=1 -j8
+
 qemu-system-aarch64 \
   -machine virt \
   -cpu cortex-a57 \
@@ -102,3 +122,42 @@ qemu-system-aarch64 \
 
 反汇编 .o 查看 kvm_el2_stub.S 各指令的地址
 aarch64-linux-gnu-objdump -d rkvm/kvm_el2_stub.o
+
+
+rust for linux 中关于内存的一些接口
+根据搜索结果中的内核 API 定义：
+
+alloc_pages(gfp_mask, order):
+作用: 分配 2^order 个物理连续的页面。
+返回: 指向第一个 struct page 的指针。
+适用场景: VMCS 要求物理地址连续，alloc_pages 保证物理连续（这一点优于 vmalloc，后者物理不连续）。
+
+page_address(page):
+作用: 给定 struct page *，返回其对应的内核逻辑地址（虚拟地址）。
+原理: 对于线性映射区（Low Memory），它进行简单的线性偏移计算（__va(phys)）。对于高端内存（HighMem，这在 64 位内核中很少用于内核数据），可能需要 kmap，但 GFP_KERNEL 分配的通常是线性映射区的。
+
+virt_to_phys(kaddr):
+作用: 将内核虚拟地址转换为物理地址。
+公式: 也就是 Phys = Virt − PAGE_OFFSET (简化版)。
+注意: 必须用于线性映射区的地址（由 kmalloc, alloc_pages, __get_free_pages 分配的），不能用于 vmalloc 分配的地址。
+
+vmalloc vs alloc_pages:
+VMCS 要求: VMCS 必须是 4KB 对齐且物理连续的。
+结论: 不要使用 vmalloc。vmalloc 分配的内存虚拟连续但物理不连续，且转换物理地址比较麻烦（需要查页表），不适合作为 VMCS 指针 78。请坚持使用 alloc_pages 或 __get_free_pages。
+针对 VMCS 的特别提示
+对齐 (Alignment): alloc_pages 在 order=0 (1页) 时天然满足 4KB 对齐，这符合 VMCS 的要求。
+清零: VMCS 区域在写入 Revision ID 之前，其余部分最好清零。使用 __GFP_ZERO 标志是最快的方法。
+Bindgen 宏问题: 内核中很多转换（如 page_to_phys）是 C 语言宏或 static inline 函数。bindgen 有时无法生成这些绑定。
+你可能需要自己编写一个小的 C Helper 函数包装这些宏，让 Rust 调用。
+
+
+Vec 包含在 kernel::prelude 中，通常你的模块文件头部会包含它：
+
+use kernel::prelude::*;
+use kernel::alloc::flags; // 如果需要用到分配标志（但在 Vec 中通常隐含为 GFP_KERNEL）
+2. 关键 API 变化 (Push vs Try_Push)
+操作	    标准 Rust (User Space)	Rust for Linux (Kernel)	说明
+创建	    Vec::new()	            Vec::new()	new 不分配内存，是安全的。
+预分配	    Vec::with_capacity(10)	Vec::try_with_capacity(10)?	必须处理内存分配失败（返回 Result）。
+添加元素	 v.push(x)	            v.try_push(x)?	最重要：push 会 Panic，内核中被禁用或不推荐；try_push 返回 Result。
+扩展	    v.extend(iter)	        v.try_extend(iter)?	同样需要处理失败。

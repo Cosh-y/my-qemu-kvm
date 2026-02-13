@@ -62,42 +62,28 @@ pub struct MiniKvmMmio {
     pub data: u64,
     pub len: u32,
     pub is_write: u8,
-    pub padding: [u8; 3],
-}
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct MiniKvmInternalError {
-    pub error_code: u32,
-    pub padding: u32,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct MiniKvmRunState {
     pub exit_reason: u32,
-    pub padding: u32,
     pub mmio: MiniKvmMmio,
-    pub internal_error: MiniKvmInternalError,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(non_camel_case_types)]
 pub enum VmExitReason {
-    Unknown = 0,
-    Mmio = 1,
-    Hlt = 2,
-    Shutdown = 3,
-    InternalError = 4,
+    EPT_VIOLATION = 48,
+    HLT = 12,
 }
 
 impl VmExitReason {
     pub fn from_u32(val: u32) -> Self {
         match val {
-            1 => VmExitReason::Mmio,
-            2 => VmExitReason::Hlt,
-            3 => VmExitReason::Shutdown,
-            4 => VmExitReason::InternalError,
-            _ => VmExitReason::Unknown,
+            48 => VmExitReason::EPT_VIOLATION,
+            12 => VmExitReason::HLT,
+            _ => panic!("Unknown VM exit reason: {}", val),
         }
     }
 }
@@ -116,7 +102,7 @@ impl MiniKvm {
         let device = OpenOptions::new()
             .read(true)
             .write(true)
-            .open("/dev/rkvm")?;
+            .open("/dev/rkvm_x86")?;
         
         Ok(MiniKvm {
             device,
@@ -257,15 +243,12 @@ impl MiniKvm {
     pub fn run(&mut self) -> io::Result<MiniKvmRunState> {
         let mut run_state = MiniKvmRunState {
             exit_reason: 0,
-            padding: 0,
             mmio: MiniKvmMmio {
                 phys_addr: 0,
                 data: 0,
                 len: 0,
                 is_write: 0,
-                padding: [0; 3],
             },
-            internal_error: MiniKvmInternalError { error_code: 0, padding: 0 },
         };
         
         unsafe {
